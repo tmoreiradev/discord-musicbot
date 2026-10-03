@@ -1,0 +1,132 @@
+FROM ghcr.io/museofficial/muse:latest
+# deno = runtime JS que o yt-dlp usa para resolver os desafios anti-bot do YouTube (EJS);
+# sem ele o bot-check "Sign in to confirm" dispara com muito mais frequencia no IP WARP
+# arch-aware: x86_64 ou aarch64
+ARG TARGETARCH
+RUN set -e; case "${TARGETARCH:-$(uname -m)}" in arm64|aarch64) A=aarch64;; *) A=x86_64;; esac; \
+    python3 -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], '/tmp/deno.zip')" \
+      "https://github.com/denoland/deno/releases/latest/download/deno-$A-unknown-linux-gnu.zip" 2>/dev/null \
+    || curl -fsSL -o /tmp/deno.zip "https://github.com/denoland/deno/releases/latest/download/deno-$A-unknown-linux-gnu.zip"
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && unzip -o /tmp/deno.zip -d /usr/local/bin && chmod 755 /usr/local/bin/deno \
+    && rm /tmp/deno.zip && apt-get purge -y unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# /skip com deferReply para nao estourar o timeout de 3s de interacao (ver patch-skip.sed)
+COPY patch-skip.sed /tmp/patch-skip.sed
+RUN sed -f /tmp/patch-skip.sed -i dist/commands/skip.js \
+    && grep -q "deferReply" dist/commands/skip.js \
+    && rm /tmp/patch-skip.sed
+
+# anuncio de "Tocando agora" no canal do pedido (nao no chat de voz) e apos faixa bloqueada
+COPY patch-announce.sed /tmp/patch-announce.sed
+RUN sed -f /tmp/patch-announce.sed -i dist/services/player.js \
+    && grep -q "_annCh" dist/services/player.js \
+    && grep -q "await this.play(); try" dist/services/player.js \
+    && rm /tmp/patch-announce.sed
+
+# renomeia /queue -> /playlist e /shuffle -> /embaralhar (ver patch-rename.sed)
+COPY patch-rename.sed /tmp/patch-rename.sed
+RUN sed -f /tmp/patch-rename.sed -i dist/commands/queue.js dist/commands/shuffle.js \
+    && grep -q "playlist" dist/commands/queue.js \
+    && grep -q "embaralhar" dist/commands/shuffle.js \
+    && rm /tmp/patch-rename.sed
+
+# link "watch?v=XXX&list=PL..." toca so o video, nao a playlist (ver patch-watch-in-playlist.sed)
+COPY patch-watch-in-playlist.sed /tmp/patch-watch-in-playlist.sed
+RUN sed -f /tmp/patch-watch-in-playlist.sed -i dist/services/get-songs.js \
+    && grep -q "url.searchParams.get('v')" dist/services/get-songs.js \
+    && rm /tmp/patch-watch-in-playlist.sed
+
+# uma linha de log por /play, para diagnosticar "voltou a playlist" (ver patch-log-query.sed)
+COPY patch-log-query.sed /tmp/patch-log-query.sed
+RUN sed -f /tmp/patch-log-query.sed -i dist/services/add-query-to-queue.js \
+    && grep -q "addToQueue guild=" dist/services/add-query-to-queue.js \
+    && rm /tmp/patch-log-query.sed
+
+# playlist do Spotify via pagina de embed quando a Web API nega as faixas (403 para token
+# de app) — ver patch-spotify-embed-fallback.sed e utils/spotify-embed.js
+COPY spotify-embed.js dist/utils/spotify-embed.js
+COPY patch-spotify-embed-fallback.sed /tmp/patch-spotify-embed-fallback.sed
+RUN sed -f /tmp/patch-spotify-embed-fallback.sed -i dist/services/spotify-api.js \
+    && grep -q "getPlaylistTracksFromEmbed" dist/services/spotify-api.js \
+    && rm /tmp/patch-spotify-embed-fallback.sed
+
+# traducao pt-BR dos textos visiveis (ver l10n.sed; nomes de faixa vem do YouTube e nao mudam)
+COPY l10n.sed /tmp/l10n.sed
+RUN sed -f /tmp/l10n.sed -i \
+      dist/services/add-query-to-queue.js \
+      dist/utils/build-embed.js \
+      dist/utils/error-msg.js \
+      dist/commands/stop.js dist/commands/disconnect.js dist/commands/pause.js \
+      dist/commands/resume.js dist/commands/skip.js dist/commands/clear.js \
+    && rm /tmp/l10n.sed \
+    && ! grep -rq "u betcha" dist/
+
+# URL crua do video no embed "Tocando agora" (ver patch-nowplaying-url.sed)
+COPY patch-nowplaying-url.sed /tmp/patch-nowplaying-url.sed
+RUN sed -f /tmp/patch-nowplaying-url.sed -i dist/utils/build-embed.js \
+    && grep -q "watch?v=' + currentlyPlaying.url" dist/utils/build-embed.js \
+    && rm /tmp/patch-nowplaying-url.sed
+
+# gate: nenhum patch pode deixar JS invalido (sed com & sem escape ja quebrou o boot uma vez)
+RUN node --check dist/services/player.js && node --check dist/services/add-query-to-queue.js \
+    && node --check dist/services/get-songs.js \
+    && node --check dist/services/spotify-api.js && node --check dist/utils/spotify-embed.js \
+    && node --check dist/commands/skip.js && node --check dist/commands/queue.js \
+    && node --check dist/commands/shuffle.js && node --check dist/utils/build-embed.js \
+    && node --check dist/utils/error-msg.js
+
+# yt-dlp NIGHTLY. Em 2026-08-18 o canal stable (2026.07.04) parou de baixar audio do
+# YouTube: so o cliente android_vr devolvia URL de formato adaptativo e o googlevideo
+# passou a responder HTTP 403 nele para conteudo de musica/licenciado; os outros
+# clientes nao devolvem formato adaptativo sem PO token. O nightly baixa normalmente.
+RUN /opt/yt-dlp/bin/python -m pip install --disable-pip-version-check --no-input \
+      --upgrade --pre "yt-dlp[default]" \
+    && /opt/yt-dlp/bin/yt-dlp --version
+
+# Config de sistema do yt-dlp (Muse nao passa --ignore-config, entao vale para toda chamada,
+# inclusive o ytdlp-stream.js). Em 2026-10-01 videos especificos passaram a devolver
+# "Sign in to confirm you're not a bot" no chain padrao (tv/web_safari/web) mesmo pelo WARP
+# e com cookie invalido; o cliente web_embedded ainda extrai e baixa. Videos normais seguem
+# no VISIONOS, entao nada muda para eles.
+COPY yt-dlp.conf /etc/yt-dlp.conf
+
+# o auto-update do boot (YT_DLP_AUTO_UPDATE=true) usa pip sem --pre e voltaria para o
+# stable quebrado; o patch poe --pre nos argumentos (ver patch-ytdlp-nightly.sed)
+COPY patch-ytdlp-nightly.sed /tmp/patch-ytdlp-nightly.sed
+RUN sed -f /tmp/patch-ytdlp-nightly.sed -i dist/utils/yt-dlp.js \
+    && grep -q "'--pre'," dist/utils/yt-dlp.js \
+    && node --check dist/utils/yt-dlp.js \
+    && rm /tmp/patch-ytdlp-nightly.sed
+
+# choice de autocomplete acima de 100 caracteres derruba a resposta inteira do /play com
+# DiscordAPIError[50035] (ver patch-autocomplete-limit.sed)
+COPY patch-autocomplete-limit.sed /tmp/patch-autocomplete-limit.sed
+RUN sed -f /tmp/patch-autocomplete-limit.sed -i dist/commands/play.js \
+    && grep -q "clampChoice" dist/commands/play.js \
+    && node --check dist/commands/play.js \
+    && rm /tmp/patch-autocomplete-limit.sed
+
+# a URL que o yt-dlp acabou de extrair nem sempre serve no instante 0: o googlevideo
+# responde 403 ao ffmpeg e o bot entra no canal e sai sem tocar. Fallback: refazer o stream
+# com o proprio yt-dlp baixando (ver ytdlp-stream.js e patch-ytdlp-stream-fallback.mjs)
+COPY ytdlp-stream.js dist/utils/ytdlp-stream.js
+COPY patch-ytdlp-stream-fallback.mjs /tmp/patch-ytdlp-stream-fallback.mjs
+RUN node /tmp/patch-ytdlp-stream-fallback.mjs dist/services/player.js \
+    && grep -q "viaYtDlpStream" dist/services/player.js \
+    && node --check dist/services/player.js \
+    && node --check dist/utils/ytdlp-stream.js \
+    && rm /tmp/patch-ytdlp-stream-fallback.mjs
+
+# a fila vive em memoria e sobrevive a saida do canal: um /play horas depois retomava a
+# faixa que estava tocando quando o bot saiu, em vez da que foi pedida (2026-08-29: Digimon
+# das 03:26 ainda "atual" as 21:53). Descarta a fila apos STALE_QUEUE_MINUTES (padrao 30,
+# 0 desliga) fora do canal — ver patch-stale-queue.mjs
+COPY patch-stale-queue.mjs /tmp/patch-stale-queue.mjs
+RUN node /tmp/patch-stale-queue.mjs dist/services/player.js dist/services/add-query-to-queue.js \
+    && grep -q "isQueueStale" dist/services/player.js \
+    && grep -q "resetStaleQueue" dist/services/add-query-to-queue.js \
+    && node --check dist/services/player.js \
+    && node --check dist/services/add-query-to-queue.js \
+    && rm /tmp/patch-stale-queue.mjs

@@ -1,0 +1,8 @@
+FROM alpine:3.20
+# binario do release oficial na arquitetura do host
+ARG TARGETARCH
+ARG WIREPROXY_VERSION=v1.1.3
+RUN apk add --no-cache curl && \
+    curl -fsSL "https://github.com/whyvl/wireproxy/releases/download/${WIREPROXY_VERSION}/wireproxy_linux_${TARGETARCH:-arm64}.tar.gz" \
+      | tar xz -C /usr/bin wireproxy && chmod +x /usr/bin/wireproxy && apk del curl
+ENTRYPOINT ["/usr/bin/wireproxy"]

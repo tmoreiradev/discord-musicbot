@@ -1,0 +1,41 @@
+services:
+  wireproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.wireproxy
+      network: host
+    image: local/wireproxy
+    container_name: wireproxy
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 128m
+    volumes:
+      - ./warp:/etc/wireproxy:ro
+    command: ["-c", "/etc/wireproxy/wireproxy.conf"]
+
+  muse:
+    build:
+      context: .
+      dockerfile: Dockerfile.muse
+      network: host
+    image: local/muse
+    container_name: muse
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      - wireproxy
+    environment:
+      - DISCORD_TOKEN=${DISCORD_BOT_TOKEN}
+      - YOUTUBE_API_KEY=${GOOGLE_CLOUD_API}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID:-}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET:-}
+      - HTTP_PROXY=http://127.0.0.1:25345
+      - HTTPS_PROXY=http://127.0.0.1:25345
+      - http_proxy=http://127.0.0.1:25345
+      - https_proxy=http://127.0.0.1:25345
+      - DEBUG=muse
+      - YT_DLP_AUTO_UPDATE=true
+      # - YT_DLP_COOKIES_PATH=/data/cookies.txt  # 2026-08-27: cookie forca client web_embedded -> 403 no ffmpeg
+    volumes:
+      - ./data:/data
