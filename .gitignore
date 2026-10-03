@@ -3,3 +3,4 @@ warp/
 data/
 wireproxy-bin
 state/
+config.json

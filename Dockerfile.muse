@@ -130,3 +130,17 @@ RUN node /tmp/patch-stale-queue.mjs dist/services/player.js dist/services/add-qu
     && node --check dist/services/player.js \
     && node --check dist/services/add-query-to-queue.js \
     && rm /tmp/patch-stale-queue.mjs
+
+# /top10 (2026-10-02): conta cada faixa que comeca a tocar em /data/play-stats.json e
+# registra o comando que poe as 10 mais tocadas do servidor na fila (ver patch-top10.mjs)
+COPY play-stats.js dist/utils/play-stats.js
+COPY top10.js dist/commands/top10.js
+COPY radio.js dist/commands/radio.js
+COPY patch-top10.mjs /tmp/patch-top10.mjs
+RUN node /tmp/patch-top10.mjs dist/services/player.js dist/inversify.config.js \
+    && node --check dist/services/player.js \
+    && node --check dist/inversify.config.js \
+    && node --check dist/utils/play-stats.js \
+    && node --check dist/commands/top10.js \
+    && node --check dist/commands/radio.js \
+    && rm /tmp/patch-top10.mjs

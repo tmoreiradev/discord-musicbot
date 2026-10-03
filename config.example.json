@@ -1,0 +1,23 @@
+{
+  "twitch": {
+    "channel": "<discord channel id for live alerts>",
+    "logins": ["some_streamer", "another_streamer"]
+  },
+  "steam_news": {
+    "channel": "<discord channel id for patch notes>",
+    "apps": {
+      "1623730": "Palworld",
+      "230410": {"name": "Warframe", "mode": "all"}
+    },
+    "friends": {
+      "owner": "<your SteamID64; with a key and a public friends list, friends are picked up automatically>",
+      "min_players": 2,
+      "profiles": ["<SteamID64>", "<SteamID64>"],
+      "ignore": ["431960"]
+    }
+  },
+  "wishlist": {
+    "channel": "<discord channel id for wishlist sales>",
+    "min_wishlists": 2
+  }
+}

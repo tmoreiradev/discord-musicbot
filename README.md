@@ -5,9 +5,9 @@ applied at image build time, plus a [wireproxy](https://github.com/whyvl/wirepro
 sidecar that routes YouTube traffic through a Cloudflare WARP tunnel so the bot works from a
 datacenter IP without tripping YouTube's "Sign in to confirm you're not a bot" check.
 
-The same bot token also drives two small cron scripts (plain Python, stdlib only, REST API
+The same bot token also drives a few small cron scripts (plain Python, stdlib only, REST API
 only — no second gateway connection, Muse is untouched): a weekly post with the game releases
-of the week, and a post for every free-game giveaway.
+of the week, a post for every free-game giveaway, Twitch live alerts and patch notes from Steam.
 
 Both containers use `network_mode: host`; the proxy listens on `127.0.0.1:25344` (SOCKS5) and
 `127.0.0.1:25345` (HTTP). Any other service on the same host can reuse the tunnel. Images build
@@ -25,6 +25,11 @@ on x86_64 and aarch64.
 | `tests-*.mjs` | Node tests for the patched modules. |
 | `games-weekly.py` | Cron job: posts the week's game releases (from [IGDB](https://api-docs.igdb.com/)), top N by hype, with platforms and direct store links. |
 | `free-games.py` | Cron job: posts free-game giveaways — Epic (store API), every other store via [GamerPower](https://www.gamerpower.com/api-read), and the monthly PlayStation Plus games (PlayStation Blog RSS). |
+| `twitch-live.py` | Cron job: posts when a Twitch channel from `config.json` goes live, edits the post when title/game change and when the stream ends (with its duration). |
+| `steam-news.py` | Cron job: posts the official Steam announcements that look like patch notes for the games in `config.json`, plus any game that 2+ people of the group played in the last two weeks (Steam Web API, or the public profile XML without a key). |
+| `wishlist-deals.py` | Cron job: posts when a game from the group's Steam wishlists goes on sale (price in BRL), with who wants it and the lowest price the bot has seen. |
+| `play-stats.js`, `top10.js`, `radio.js`, `patch-top10.mjs` | New slash commands: `/top10` queues the 10 most played tracks of the server (play counts kept in `data/play-stats.json`); `/radio` queues tracks similar to the last ones played (YouTube Mix of the last 3, filtered). `backfill-play-stats.py` seeds the counter from the bot's past "now playing" posts. |
+| `botlib.py`, `config.example.json` | Shared helpers for the cron scripts; copy the example to `config.json` and fill in channels, Twitch logins and Steam app ids. |
 | `warp-watchdog.sh` | Cron job: if YouTube starts bot-checking the WARP exit IP, registers a new free WARP identity with `wgcf` and restarts the proxy. |
 | `refresh-cookies.sh` | Optional cron job that keeps a YouTube cookie jar alive by letting another yt-dlp instance rewrite it. Only needed if you use cookies (disabled by default). |
 
@@ -55,6 +60,7 @@ in the embed; a stale-queue fix and a yt-dlp stream fallback.
    | `GOOGLE_CLOUD_API` | YouTube Data API key (search). |
    | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | Optional, for Spotify links. |
    | `IGDB_CLIENT_ID` / `IGDB_CLIENT_SECRET` | For `games-weekly.py`: a Twitch application from dev.twitch.tv (client credentials). |
+   | `STEAM_API_KEY` | Optional, for `steam-news.py` / `wishlist-deals.py` (steamcommunity.com/dev/apikey; Steam only issues keys to accounts with the mobile authenticator). |
    | `GAMES_CHANNEL_ID` | Text channel for both game posts (`FREE_CHANNEL_ID` overrides it for giveaways). The bot needs View, Send and Embed Links there. |
 
 3. `docker compose up -d --build`.
@@ -64,6 +70,9 @@ in the embed; a stale-queue fix and a yt-dlp stream fallback.
    */10 * * * * /path/to/warp-watchdog.sh
    0 10 * * 1   /path/to/games-weekly.py          # Monday 10:00, releases Mon–Sun
    */30 * * * * /path/to/free-games.py
+   */2  * * * * /path/to/twitch-live.py           # same Twitch app as IGDB
+   */30 * * * * /path/to/steam-news.py
+   15 */3 * * * /path/to/wishlist-deals.py
    ```
 
    Both Python scripts take `--dry-run` (print the embeds instead of posting);
@@ -71,7 +80,7 @@ in the embed; a stale-queue fix and a yt-dlp stream fallback.
    already posted in `state/free-games.json`; its **first run only records** the giveaways
    that are already active, so a new channel is not flooded.
 
-`.env`, `warp/`, `data/` and `state/` are gitignored.
+`.env`, `config.json`, `warp/`, `data/` and `state/` are gitignored.
 
 ## Gotchas
 
