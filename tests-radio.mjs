@@ -1,5 +1,5 @@
 // Teste do /radio sem Discord: comando real do container DI, interaction e player falsos.
-// Uso: cp tests-radio.mjs data/test-radio.mjs &&
+// Uso (ESTILO=<estilo>, USER_ID=<id> para o meu-top): cp tests-radio.mjs data/test-radio.mjs &&
 //      docker exec -e DATABASE_URL=file:/data/db.sqlite muse node /data/test-radio.mjs
 const {default: container} = await import('file:///usr/app/dist/inversify.config.js');
 const {TYPES} = await import('file:///usr/app/dist/types.js');
@@ -22,8 +22,8 @@ await cmd.execute({
   guild: {id: '<guild-id>', channels: {cache: new Map()}},
   channel: {id: 'test'},
   // type 2 = ChannelType.GuildVoice
-  member: {user: {id: 'test'}, voice: {channel: {id: 'v', type: 2, members: []}}},
-  options: {getInteger: () => null},
+  member: {displayName: 'teste', user: {id: process.env.USER_ID ?? 'test'}, voice: {channel: {id: 'v', type: 2, members: []}}},
+  options: {getInteger: () => null, getString: () => process.env.ESTILO ?? 'parecidas'},
   deferReply: async () => {},
   editReply: async r => { reply = r; },
 });

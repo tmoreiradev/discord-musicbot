@@ -2,8 +2,8 @@
 //
 // - player.js: depois do startTrackingPosition(0) do playWithAttempt (faixa nova saindo do
 //   inicio; resume/seek/loop passam por outros caminhos) chama recordPlay (play-stats.js).
-// - inversify.config.js: importa e registra commands/top10.js e commands/radio.js (este
-//   desde 2026-10-02 tambem: musicas parecidas com as ultimas tocadas) junto dos outros.
+// - inversify.config.js: importa e registra commands/radio.js junto dos outros. O /top10
+//   virou o estilo "top" do /radio em 2026-10-03 e o comando proprio saiu.
 //
 // Mesmo esquema dos outros .mjs: cada trecho de origem tem que existir exatamente uma vez,
 // senao o build aborta (protege contra o FROM muse:latest mudar o codigo por baixo).
@@ -44,18 +44,17 @@ import { recordPlay } from '../utils/play-stats.js';`,
 ]);
 
 patch(inversifyFile, [
-  ['import do top10',
+  ['import do radio',
     `import Volume from './commands/volume.js';`,
     `import Volume from './commands/volume.js';
-import Top10 from './commands/top10.js';
 import Radio from './commands/radio.js';`,
   ],
 
-  ['registra o top10 e o radio',
-    `    Volume,
+  // desde o Muse 2.12.0 a lista termina em Help, nao em Volume
+  ['registra o radio',
+    `    Help,
 ].forEach(command => {`,
-    `    Volume,
-    Top10,
+    `    Help,
     Radio,
 ].forEach(command => {`,
   ],

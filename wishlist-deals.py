@@ -17,27 +17,7 @@ Uso: wishlist-deals.py [--dry-run]
 import sys
 import time
 
-from botlib import http, load_config, load_env, load_state, log, now, save_state, send
-
-API = "https://api.steampowered.com"
-
-
-def profiles(key, fc):
-    try:
-        r = http(f"{API}/ISteamUser/GetFriendList/v1/?key={key}&steamid={fc['owner']}&relationship=friend")
-        return [fc["owner"]] + [f["steamid"] for f in r["friendslist"]["friends"]]
-    except Exception as e:
-        log(f"GetFriendList falhou ({e}); usando a lista do config")
-        return fc["profiles"]
-
-
-def player_names(key, ids):
-    names = {}
-    for i in range(0, len(ids), 100):
-        r = http(f"{API}/ISteamUser/GetPlayerSummaries/v2/?key={key}&steamids={','.join(ids[i:i + 100])}")
-        names.update({p["steamid"]: p["personaname"] for p in r["response"]["players"]})
-    return names
-
+from botlib import http, load_config, load_env, load_state, log, now, save_state, send, STEAM_API, steam_names, steam_profiles
 
 def prices(appids):
     out = {}
@@ -73,11 +53,11 @@ def main():
     first_run = st is None
     st = st or {"sales": {}, "lows": {}}
 
-    ids = profiles(key, fc)
+    ids = steam_profiles(key, fc)
     wishers = {}
     for s in ids:
         try:
-            items = http(f"{API}/IWishlistService/GetWishlist/v1/?steamid={s}").get("response", {}).get("items", [])
+            items = http(f"{STEAM_API}/IWishlistService/GetWishlist/v1/?steamid={s}").get("response", {}).get("items", [])
         except Exception as e:
             log(f"wishlist {s}: falhou ({e})")
             continue
@@ -86,7 +66,7 @@ def main():
         time.sleep(0.3)
     watch = [a for a, w in wishers.items() if fc["owner"] in w or len(w) >= wc.get("min_wishlists", 2)]
     pr = prices(watch)
-    names = player_names(key, ids)
+    names = steam_names(key, ids)
     posted = 0
     for appid, p in pr.items():
         final = p["final"]

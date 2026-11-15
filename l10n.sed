@@ -11,6 +11,8 @@ s|the stop-and-go light is now green|voltando a tocar|g
 s|clearer than a field after a fresh harvest|fila limpa|g
 # _skipped vem do patch-skip.sed (capturado antes do forward)
 s~content: 'keep \\'er movin\\''~content: _skipped ? `pulando **${_skipped.title}**` : 'pulando'~
+# Muse 2.12.0: /skip responde so para quem pediu (o card da sessao mostra a proxima faixa)
+s~editReply(player.getCurrent() ? 'Skipped.' : 'Queue complete.')~editReply(player.getCurrent() ? (_skipped ? `pulando **${_skipped.title}**` : 'pulando') : 'fila terminou')~
 
 # --- add-query-to-queue.js (mensagens do /play)
 # titulo vira hyperlink; <> na URL suprime o preview/unfurl do Discord

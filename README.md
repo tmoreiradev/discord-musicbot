@@ -21,7 +21,7 @@ on x86_64 and aarch64.
 | `Dockerfile.muse` | Muse image + `deno` (yt-dlp needs it for YouTube's JS challenges) + yt-dlp **nightly** + `yt-dlp.conf` + the patches below. |
 | `Dockerfile.wireproxy` | Downloads the official wireproxy release for the host architecture. |
 | `yt-dlp.conf` | Installed as `/etc/yt-dlp.conf`: adds the `web_embedded` player client as a fallback for videos that bot-check the default clients. |
-| `patch-*.sed`, `patch-*.mjs`, `l10n.sed`, `spotify-embed.js`, `ytdlp-stream.js` | Patches applied to Muse's compiled `dist/` at build time (see the comments in each file). |
+| `patch-*.sed`, `patch-*.mjs`, `l10n.sed`, `spotify-embed.js` | Patches applied to Muse's compiled `dist/` at build time (see the comments in each file). |
 | `tests-*.mjs` | Node tests for the patched modules. |
 | `games-weekly.py` | Cron job: posts the week's game releases (from [IGDB](https://api-docs.igdb.com/)), top N by hype, with platforms and direct store links. |
 | `free-games.py` | Cron job: posts free-game giveaways — Epic (store API), every other store via [GamerPower](https://www.gamerpower.com/api-read), and the monthly PlayStation Plus games (PlayStation Blog RSS). |

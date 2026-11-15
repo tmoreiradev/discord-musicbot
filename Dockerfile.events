@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && apt-get clean \
+ && pip install --no-cache-dir "discord.py==2.5.2"
+WORKDIR /app
+CMD ["python", "-u", "events.py"]

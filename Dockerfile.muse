@@ -1,4 +1,5 @@
-FROM ghcr.io/museofficial/muse:latest
+# pinado (2.12.0, 2026-10-30; antes 2.11.8): latest sem pin ja quebrou os patches num rebuild. Atualizar = trocar o digest e conferir os patches
+FROM ghcr.io/museofficial/muse@sha256:b10ea1d4807ef62260947de1d9527b1bb909acb1818b838d0768734b3f5e2665
 # deno = runtime JS que o yt-dlp usa para resolver os desafios anti-bot do YouTube (EJS);
 # sem ele o bot-check "Sign in to confirm" dispara com muito mais frequencia no IP WARP
 # arch-aware: x86_64 ou aarch64
@@ -38,6 +39,12 @@ RUN sed -f /tmp/patch-watch-in-playlist.sed -i dist/services/get-songs.js \
     && grep -q "url.searchParams.get('v')" dist/services/get-songs.js \
     && rm /tmp/patch-watch-in-playlist.sed
 
+# link do Spotify com /intl-xx/ no caminho (ver patch-spotify-intl.sed)
+COPY patch-spotify-intl.sed /tmp/patch-spotify-intl.sed
+RUN sed -f /tmp/patch-spotify-intl.sed -i dist/services/get-songs.js \
+    && grep -q "intl-\[a-z-\]" dist/services/get-songs.js \
+    && rm /tmp/patch-spotify-intl.sed
+
 # uma linha de log por /play, para diagnosticar "voltou a playlist" (ver patch-log-query.sed)
 COPY patch-log-query.sed /tmp/patch-log-query.sed
 RUN sed -f /tmp/patch-log-query.sed -i dist/services/add-query-to-queue.js \
@@ -50,6 +57,7 @@ COPY spotify-embed.js dist/utils/spotify-embed.js
 COPY patch-spotify-embed-fallback.sed /tmp/patch-spotify-embed-fallback.sed
 RUN sed -f /tmp/patch-spotify-embed-fallback.sed -i dist/services/spotify-api.js \
     && grep -q "getPlaylistTracksFromEmbed" dist/services/spotify-api.js \
+    && grep -q "tracksResponse.name" dist/services/spotify-api.js \
     && rm /tmp/patch-spotify-embed-fallback.sed
 
 # traducao pt-BR dos textos visiveis (ver l10n.sed; nomes de faixa vem do YouTube e nao mudam)
@@ -61,7 +69,8 @@ RUN sed -f /tmp/l10n.sed -i \
       dist/commands/stop.js dist/commands/disconnect.js dist/commands/pause.js \
       dist/commands/resume.js dist/commands/skip.js dist/commands/clear.js \
     && rm /tmp/l10n.sed \
-    && ! grep -rq "u betcha" dist/
+    && ! grep -rq "u betcha" dist/ \
+    && ! grep -q "'Skipped.'" dist/commands/skip.js
 
 # URL crua do video no embed "Tocando agora" (ver patch-nowplaying-url.sed)
 COPY patch-nowplaying-url.sed /tmp/patch-nowplaying-url.sed
@@ -100,24 +109,13 @@ RUN sed -f /tmp/patch-ytdlp-nightly.sed -i dist/utils/yt-dlp.js \
     && node --check dist/utils/yt-dlp.js \
     && rm /tmp/patch-ytdlp-nightly.sed
 
-# choice de autocomplete acima de 100 caracteres derruba a resposta inteira do /play com
-# DiscordAPIError[50035] (ver patch-autocomplete-limit.sed)
-COPY patch-autocomplete-limit.sed /tmp/patch-autocomplete-limit.sed
-RUN sed -f /tmp/patch-autocomplete-limit.sed -i dist/commands/play.js \
-    && grep -q "clampChoice" dist/commands/play.js \
-    && node --check dist/commands/play.js \
-    && rm /tmp/patch-autocomplete-limit.sed
-
-# a URL que o yt-dlp acabou de extrair nem sempre serve no instante 0: o googlevideo
-# responde 403 ao ffmpeg e o bot entra no canal e sai sem tocar. Fallback: refazer o stream
-# com o proprio yt-dlp baixando (ver ytdlp-stream.js e patch-ytdlp-stream-fallback.mjs)
-COPY ytdlp-stream.js dist/utils/ytdlp-stream.js
-COPY patch-ytdlp-stream-fallback.mjs /tmp/patch-ytdlp-stream-fallback.mjs
-RUN node /tmp/patch-ytdlp-stream-fallback.mjs dist/services/player.js \
-    && grep -q "viaYtDlpStream" dist/services/player.js \
-    && node --check dist/services/player.js \
-    && node --check dist/utils/ytdlp-stream.js \
-    && rm /tmp/patch-ytdlp-stream-fallback.mjs
+# bot-check do YouTube em um video especifico travava a fila: agora a faixa e pulada
+# (ver patch-botcheck-skip.sed)
+COPY patch-botcheck-skip.sed /tmp/patch-botcheck-skip.sed
+RUN sed -f /tmp/patch-botcheck-skip.sed -i dist/utils/yt-dlp.js \
+    && grep -q "not a bot/i" dist/utils/yt-dlp.js \
+    && node --check dist/utils/yt-dlp.js \
+    && rm /tmp/patch-botcheck-skip.sed
 
 # a fila vive em memoria e sobrevive a saida do canal: um /play horas depois retomava a
 # faixa que estava tocando quando o bot saiu, em vez da que foi pedida (2026-08-29: Digimon
@@ -131,16 +129,33 @@ RUN node /tmp/patch-stale-queue.mjs dist/services/player.js dist/services/add-qu
     && node --check dist/services/add-query-to-queue.js \
     && rm /tmp/patch-stale-queue.mjs
 
-# /top10 (2026-10-02): conta cada faixa que comeca a tocar em /data/play-stats.json e
-# registra o comando que poe as 10 mais tocadas do servidor na fila (ver patch-top10.mjs)
+# play-stats (2026-10-02): conta cada faixa que comeca a tocar em /data/play-stats.json e
+# registra o /radio (estilos, mais tocadas, parecidas; ver radio.js e patch-top10.mjs)
 COPY play-stats.js dist/utils/play-stats.js
-COPY top10.js dist/commands/top10.js
 COPY radio.js dist/commands/radio.js
 COPY patch-top10.mjs /tmp/patch-top10.mjs
 RUN node /tmp/patch-top10.mjs dist/services/player.js dist/inversify.config.js \
     && node --check dist/services/player.js \
     && node --check dist/inversify.config.js \
     && node --check dist/utils/play-stats.js \
-    && node --check dist/commands/top10.js \
     && node --check dist/commands/radio.js \
     && rm /tmp/patch-top10.mjs
+
+# links do Spotify/Deezer/Apple Music escolhem o video pela duracao da faixa; aceita links curtos
+# (spotify.link, link.deezer.com) e Deezer/Apple Music (ver music-links.js e patch-music-links.mjs)
+COPY music-links.js dist/utils/music-links.js
+COPY patch-music-links.mjs /tmp/patch-music-links.mjs
+RUN node /tmp/patch-music-links.mjs dist \
+    && node --check dist/services/get-songs.js \
+    && node --check dist/services/youtube-api.js \
+    && node --check dist/services/spotify-api.js \
+    && node --check dist/utils/music-links.js \
+    && rm /tmp/patch-music-links.mjs
+
+# busca por texto: se a API do YouTube devolver 0 resultados, busca de novo pelo yt-dlp com o
+# cookie (ver patch-search-fallback.mjs; teste em tests-search-fallback.mjs)
+COPY patch-search-fallback.mjs /tmp/patch-search-fallback.mjs
+RUN node /tmp/patch-search-fallback.mjs dist \
+    && node --check dist/utils/yt-dlp.js \
+    && node --check dist/services/youtube-api.js \
+    && rm /tmp/patch-search-fallback.mjs

@@ -86,3 +86,23 @@ def save_state(name, data):
     with open(p + ".tmp", "w") as f:
         json.dump(data, f, indent=1, ensure_ascii=False)
     os.replace(p + ".tmp", p)
+
+
+STEAM_API = "https://api.steampowered.com"
+
+
+def steam_profiles(key, fc):
+    try:
+        r = http(f"{STEAM_API}/ISteamUser/GetFriendList/v1/?key={key}&steamid={fc['owner']}&relationship=friend")
+        return [fc["owner"]] + [f["steamid"] for f in r["friendslist"]["friends"]]
+    except Exception as e:
+        log(f"GetFriendList falhou ({e}); usando a lista do config")
+        return fc["profiles"]
+
+
+def steam_names(key, ids):
+    names = {}
+    for i in range(0, len(ids), 100):
+        r = http(f"{STEAM_API}/ISteamUser/GetPlayerSummaries/v2/?key={key}&steamids={','.join(ids[i:i + 100])}")
+        names.update({p["steamid"]: p["personaname"] for p in r["response"]["players"]})
+    return names

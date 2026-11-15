@@ -110,7 +110,8 @@ def store_links(game, platforms):
 def collect(cid, token, start, end):
     fields = ("date,platform,game.name,game.slug,game.url,game.hypes,game.game_type,"
               "game.parent_game,game.external_games.url,game.external_games.uid,"
-              "game.external_games.external_game_source.name,game.websites.url,game.websites.type.type")
+              "game.external_games.external_game_source.name,game.websites.url,game.websites.type.type,"
+              "game.cover.image_id")
     plats = ",".join(map(str, PLATFORMS))
     games = {}
     offset = 0
@@ -135,28 +136,25 @@ def build_embeds(entries, start, end, limit):
     dias = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
     top = [e for e in entries if (e["game"].get("hypes") or 0) > 0][:limit] or entries[:limit]
     top.sort(key=lambda e: (e["date"], -(e["game"].get("hypes") or 0)))
-    lines = []
+    last = end - dt.timedelta(days=1)
+    title = f"🎮 Lançamentos da semana — {start:%d/%m} a {last:%d/%m}"
+    if not top:
+        return [{"title": title, "description": "Nenhum lançamento relevante nesta semana.", "color": 0x9146FF}]
+    # Um embed por jogo, para cada um ter a propria capa (embed so tem uma imagem).
+    out = [{"title": title, "color": 0x9146FF}]
+    order = list(PLATFORMS.values())
     for e in top:
         g = e["game"]
         d = dt.datetime.fromtimestamp(e["date"], TZ)
-        order = list(PLATFORMS.values())
         plats = ", ".join(sorted(e["platforms"], key=order.index))
         links = store_links(g, e["platforms"])
         link_txt = " · ".join(f"[{k}]({v})" for k, v in links.items()) or f"[IGDB]({g.get('url')})"
-        lines.append(f"**{g['name']}** — {dias[d.weekday()]} {d:%d/%m}\n{plats} · {link_txt}")
-    last = end - dt.timedelta(days=1)
-    title = f"🎮 Lançamentos da semana — {start:%d/%m} a {last:%d/%m}"
-    if not lines:
-        return [{"title": title, "description": "Nenhum lançamento relevante nesta semana.", "color": 0x9146FF}]
-    embeds, chunk = [], ""
-    for ln in lines:
-        if len(chunk) + len(ln) + 2 > 3900:
-            embeds.append(chunk)
-            chunk = ""
-        chunk += ln + "\n\n"
-    embeds.append(chunk)
-    out = [{"description": c.strip(), "color": 0x9146FF} for c in embeds]
-    out[0]["title"] = title
+        emb = {"description": f"**{g['name']}** — {dias[d.weekday()]} {d:%d/%m}\n{plats} · {link_txt}",
+               "color": 0x9146FF}
+        cover = (g.get("cover") or {}).get("image_id")
+        if cover:
+            emb["thumbnail"] = {"url": f"https://images.igdb.com/igdb/image/upload/t_cover_big/{cover}.jpg"}
+        out.append(emb)
     out[-1]["footer"] = {"text": f"Top {len(top)} por hype no IGDB · {len(entries)} lançamentos no total"}
     return out
 
@@ -171,15 +169,17 @@ def main():
     cid = env["IGDB_CLIENT_ID"]
     token = twitch_token(cid, env["IGDB_CLIENT_SECRET"])
     entries = collect(cid, token, start, end)
-    payload = {"embeds": build_embeds(entries, start, end, int(env.get("GAMES_LIMIT", "15"))),
-               "allowed_mentions": {"parse": []}}
+    embeds = build_embeds(entries, start, end, int(env.get("GAMES_LIMIT", "15")))
     if "--dry-run" in args:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(embeds, ensure_ascii=False, indent=2))
         return
-    msg = http(f"https://discord.com/api/v10/channels/{env['GAMES_CHANNEL_ID']}/messages",
-               data=json.dumps(payload).encode(), method="POST",
-               headers={"Authorization": f"Bot {env['DISCORD_BOT_TOKEN']}", "Content-Type": "application/json"})
-    print(f"{dt.datetime.now(TZ):%F %T} postado msg={msg['id']} jogos={len(entries)}")
+    # Discord aceita no maximo 10 embeds por mensagem.
+    for i in range(0, len(embeds), 10):
+        payload = {"embeds": embeds[i:i + 10], "allowed_mentions": {"parse": []}}
+        msg = http(f"https://discord.com/api/v10/channels/{env['GAMES_CHANNEL_ID']}/messages",
+                   data=json.dumps(payload).encode(), method="POST",
+                   headers={"Authorization": f"Bot {env['DISCORD_BOT_TOKEN']}", "Content-Type": "application/json"})
+        print(f"{dt.datetime.now(TZ):%F %T} postado msg={msg['id']} jogos={len(entries)}")
 
 
 if __name__ == "__main__":

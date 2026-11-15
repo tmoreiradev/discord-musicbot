@@ -36,6 +36,19 @@ services:
       - https_proxy=http://127.0.0.1:25345
       - DEBUG=muse
       - YT_DLP_AUTO_UPDATE=true
-      # - YT_DLP_COOKIES_PATH=/data/cookies.txt  # 2026-08-27: cookie forca client web_embedded -> 403 no ffmpeg
+      - YT_DLP_COOKIES_PATH=/data/cookies.txt  # 2026-10-03: religado, bot-check amplo no IP do servidor (desligado 2026-08-27 por 403 web_embedded, hoje coberto pelo fallback ytdlp-stream)
     volumes:
       - ./data:/data
+
+  events:
+    build:
+      context: .
+      dockerfile: Dockerfile.events
+    image: local/discord-events
+    container_name: discord-events
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 192m
+    volumes:
+      - ./:/app:ro
+      - ./state:/app/state

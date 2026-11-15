@@ -48,7 +48,8 @@ export const getPlaylistTracksFromEmbed = async playlistId => {
     throw new Error(`Spotify embed page for ${playlistId} carried no __NEXT_DATA__ block`);
   }
 
-  const trackList = findTrackList(JSON.parse(match[1]));
+  const data = JSON.parse(match[1]);
+  const trackList = findTrackList(data);
 
   if (!trackList || trackList.length === 0) {
     throw new Error(`Spotify embed page for ${playlistId} carried no track list`);
@@ -61,8 +62,11 @@ export const getPlaylistTracksFromEmbed = async playlistId => {
       track: {
         name: track.title,
         artists: [{name: (track.subtitle ?? '').split(',')[0].trim()}],
+        duration_ms: track.duration ?? 0,
       },
     })),
     next: null,
+    // playlists da Spotify (id 37i9...) dao 404 ate no GET /v1/playlists/{id}; o nome vem daqui
+    name: data?.props?.pageProps?.state?.data?.entity?.name,
   };
 };

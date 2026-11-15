@@ -17,7 +17,7 @@
 // curta de rede continua retomando a fila como antes -- o corte e por tempo justamente para
 // nao destruir uma playlist longa por causa de um blip.
 //
-// Aplicado por node, e nao por sed, pelo mesmo motivo do patch-ytdlp-stream-fallback:
+// Aplicado por node, e nao por sed, pelo mesmo motivo do patch-top10.mjs:
 // troca blocos de varias linhas e cada apply() aborta o build se o trecho de origem nao
 // existir exatamente uma vez, que e o que protege contra uma atualizacao da imagem do Muse.
 import {readFileSync, writeFileSync} from 'fs';
@@ -71,9 +71,29 @@ patch(playerFile, [
             this.currentChannel = channel;`,
   ],
 
+  // Quando a ultima faixa termina, forward(1) leva queuePosition para queue.length e
+  // finishQueue() roda sem limpar nada. getCurrent() fica null, isQueueStale() nunca
+  // dispara, e as faixas ja tocadas continuam na fila ate um /stop. Visto em 2026-10-13: um
+  // /play de 1 musica mostrou "Tocando agora (19 de 19)". Todo caminho que chega em
+  // finishQueue() e de fila esgotada, entao o historico pode ir embora ali.
+  ['fila esgotada descarta o historico',
+    `    async finishQueue() {
+        this.playbackAttempts.invalidate();
+        this.stopTrackingPosition();
+        this.status = STATUS.IDLE;`,
+    `    async finishQueue() {
+        this.playbackAttempts.invalidate();
+        this.stopTrackingPosition();
+        this.status = STATUS.IDLE;
+        this.queue = [];
+        this.queuePosition = 0;
+        this.currentQueueEntryVersion++;`,
+  ],
+
+  // no Muse 2.12.0 o stop() passou a dizer o motivo ao disconnect() ('stopped')
   ['metodos isQueueStale / resetStaleQueue',
     `    stop() {
-        this.disconnect();`,
+        this.disconnect('stopped');`,
     `    staleQueueTimeoutMs() {
         const minutes = Number.parseInt(process.env.STALE_QUEUE_MINUTES ?? '30', 10);
         return Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 * 1000 : 30 * 60 * 1000;
@@ -102,7 +122,7 @@ patch(playerFile, [
         this.positionInSeconds = 0;
     }
     stop() {
-        this.disconnect();`,
+        this.disconnect('stopped');`,
   ],
 ]);
 
