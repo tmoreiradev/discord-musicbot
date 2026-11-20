@@ -48,7 +48,7 @@ async def on_command_error(ctx, error):
 
 @tasks.loop(minutes=5)
 async def sync_commands():
-    try:  # excecao sem tratar mata o loop de vez e o /servidor some no proximo boot do Muse
+    try:  # excecao sem tratar mata o loop de vez e os nossos comandos somem no proximo boot do Muse
         have = {c.name for c in await client.tree.fetch_commands()}
         if not {c.name for c in client.tree.get_commands()} <= have:
             await client.tree.sync()
