@@ -11,7 +11,7 @@ com Manage Roles. Roda no container `events` do compose (repo montado em /app).
 config.json -> "events": {"channel": <id do #log>, "autorole": <id do cargo>}
 
 Os outros recursos que precisam do gateway sao modulos com setup(bot):
-steamlink (previa de link da Steam), weekly (ranking semanal), tempvoice (salas temporarias).
+steamlink (previa de link da Steam), tempvoice (salas temporarias).
 Comandos de barra sao GLOBAIS: o Muse registra os dele por servidor e, no boot, zera os globais;
 sync_commands recoloca os nossos em ate 5 min.
 """
@@ -22,7 +22,6 @@ from discord.ext import commands, tasks
 
 import steamlink
 import tempvoice
-import weekly
 from botlib import load_config, load_env, log
 
 cfg = load_config()["events"]
@@ -49,14 +48,24 @@ async def on_command_error(ctx, error):
 
 @tasks.loop(minutes=5)
 async def sync_commands():
-    have = {c.name for c in await client.tree.fetch_commands()}
-    if not {c.name for c in client.tree.get_commands()} <= have:
-        await client.tree.sync()
-        log("comandos globais registrados")
+    try:  # excecao sem tratar mata o loop de vez e o /servidor some no proximo boot do Muse
+        have = {c.name for c in await client.tree.fetch_commands()}
+        if not {c.name for c in client.tree.get_commands()} <= have:
+            await client.tree.sync()
+            log("comandos globais registrados")
+    except discord.HTTPException as e:
+        log(f"sync_commands: {e}")
+
+
+@client.tree.error
+async def on_tree_error(it, error):
+    # o token e dividido com o Muse: os comandos dele (/play etc.) chegam aqui e nao sao nossos
+    if not isinstance(error, discord.app_commands.CommandNotFound):
+        log(f"comando /{it.command.name if it.command else '?'}: {error!r}")
 
 
 async def setup_hook():
-    for mod in (steamlink, weekly, tempvoice):
+    for mod in (steamlink, tempvoice):
         await mod.setup(client)
     sync_commands.before_loop(client.wait_until_ready)
     sync_commands.start()
@@ -66,7 +75,13 @@ client.setup_hook = setup_hook
 async def post(guild, **kw):
     ch = guild.get_channel(CHANNEL)
     if ch:
-        await ch.send(allowed_mentions=NO_PING, **kw)
+        kw.setdefault("allowed_mentions", NO_PING)
+        await ch.send(**kw)
+
+
+def who(m):
+    """Mencao + nome escrito: a mencao resolve pelo `mentions` da mensagem e o nome fica legivel de qualquer jeito."""
+    return f"{m.mention} (**{discord.utils.escape_markdown(m.display_name)}**, `@{m.name}`)"
 
 
 @client.listen()
@@ -82,13 +97,20 @@ async def on_member_join(m):
             await m.add_roles(role, reason="autorole na entrada")
         except discord.HTTPException as e:
             log(f"autorole falhou para {m}: {e}")
-    await post(m.guild, content=f"👉 {m.mention} entrou no servidor!")
+    # com allowed_mentions vazio o Discord nao poe a pessoa em `mentions` e o cliente mostra "@unknown-user"
+    # ate para quem ainda esta no servidor; liberando so ela, a mencao resolve (o #log e privado, ninguem e
+    # notificado). O nome escrito cobre o caso de a pessoa sair depois.
+    await post(m.guild, allowed_mentions=discord.AllowedMentions(users=[m]),
+               content=f"👉 {who(m)} entrou no servidor!")
 
 
 @client.listen()
 async def on_member_remove(m):
     log(f"saiu: {m} ({m.id})")
-    await post(m.guild, content=f"👈 {discord.utils.escape_markdown(m.display_name)} saiu do servidor...")
+    # sem mencao: o Discord nao resolve mencao de quem ja saiu (testado, `mentions` volta vazio) e ela
+    # apareceria como "@unknown-user"; nome, usuario e id escritos identificam a pessoa
+    await post(m.guild, content=f"👈 **{discord.utils.escape_markdown(m.display_name)}** (`@{m.name}`, "
+                                f"ID {m.id}) saiu do servidor...")
 
 
 @client.listen()
@@ -102,7 +124,9 @@ async def on_member_update(before, after):
     e.add_field(name="Antigo", value=f"`{before.nick or 'sem apelido'}`")
     e.add_field(name="Novo", value=f"`{after.nick or 'sem apelido'}`")
     e.set_footer(text=f"ID do usuário: {after.id}")
-    await post(after.guild, embed=e)
+    # mencao no texto da mensagem: dentro do embed ela nao entra em `mentions` e vira "@unknown-user"
+    await post(after.guild, embed=e, content=f"📝 {who(after)} trocou de apelido",
+               allowed_mentions=discord.AllowedMentions(users=[after]))
 
 
 @client.listen()
@@ -125,7 +149,14 @@ async def on_raw_message_delete(p):
         log(f"apagada (fora do cache): {p.message_id} em {p.channel_id}")
         e.description = "*conteúdo não disponível (mensagem anterior ao último restart do bot)*"
         e.set_footer(text=f"ID da mensagem: {p.message_id}")
-    await post(guild, embed=e)
+    kw = {}
+    if isinstance(m and m.author, discord.Member):  # mencao so resolve para quem ainda esta no servidor
+        kw = {"content": f"🗑️ {who(m.author)} apagou uma mensagem em <#{p.channel_id}>",
+              "allowed_mentions": discord.AllowedMentions(users=[m.author])}
+    elif m:
+        kw = {"content": f"🗑️ **{discord.utils.escape_markdown(m.author.display_name)}** (`@{m.author.name}`, "
+                         f"ID {m.author.id}) apagou uma mensagem em <#{p.channel_id}>"}
+    await post(guild, embed=e, **kw)
 
 
 # so WARNING+ do discord.py: sem isso, excecao dentro de listener some sem deixar rastro

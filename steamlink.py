@@ -36,7 +36,7 @@ def refresh_owned():
     owned, wish = {}, {}
     for s in ids:
         try:
-            r = http(f"{STEAM_API}/IPlayerService/GetOwnedGames/v1/?key={KEY}&steamid={s}&include_played_free_games=1")
+            r = http(f"{STEAM_API}/IPlayerService/GetOwnedGames/v1/?key={KEY}&steamid={s}&include_played_free_games=1") if KEY else {}
             games = r.get("response", {}).get("games")
             if games:
                 owned[s] = [g["appid"] for g in games]
@@ -48,7 +48,10 @@ def refresh_owned():
                 wish[s] = [i["appid"] for i in items]
         except Exception as e:
             log(f"GetWishlist {s}: {e}")
-    st = {"ts": time.time(), "owned": owned, "wish": wish, "names": steam_names(KEY, list(set(owned) | set(wish)))}
+    # chave recusada = nenhuma biblioteca e nenhum nome: mantem o ultimo dado bom em vez de gravar vazio
+    prev = load_state("steam-owned") or {}
+    st = {"ts": time.time(), "owned": owned or prev.get("owned", {}), "wish": wish,
+          "names": {**prev.get("names", {}), **steam_names(KEY, list(set(owned) | set(wish)))}}
     save_state("steam-owned", st)
     log(f"steam-owned: {len(owned)}/{len(ids)} bibliotecas e {len(wish)} wishlists públicas")
     return st
@@ -314,8 +317,7 @@ async def owned_loop():
 
 
 async def setup(bot):
-    if not KEY:
-        log("steamlink: sem STEAM_API_KEY, desligado")
-        return
+    if not KEY:  # previa, preco e wishlist nao pedem chave; so "quem tem" fica com o ultimo dado gravado
+        log("steamlink: sem STEAM_API_KEY, bibliotecas ficam com o ultimo dado")
     bot.add_listener(on_message, "on_message")
     owned_loop.start()

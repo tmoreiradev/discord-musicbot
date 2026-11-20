@@ -25,6 +25,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 
+from botlib import single_instance
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, "state", "free-games.json")
 TZ = ZoneInfo("America/Sao_Paulo")
@@ -193,6 +195,7 @@ def post(env, item):
 def main():
     dry = "--dry-run" in sys.argv
     env = load_env()
+    lock = single_instance("free-games")  # noqa: F841 (duas rodadas liam o mesmo state e postavam o mesmo item)
     items = []
     for name, src in (("epic", epic), ("gamerpower", gamerpower), ("psplus", psplus)):
         try:
@@ -210,7 +213,11 @@ def main():
         if dry:
             print(json.dumps(embed(item), ensure_ascii=False, default=str))
             continue
-        post(env, item)
+        try:
+            post(env, item)
+        except Exception as e:  # nao gravado como visto: sai na proxima rodada, e os outros itens seguem
+            print(f"{dt.datetime.now(TZ):%F %T} post de {item['key']} falhou: {e}", file=sys.stderr)
+            continue
         print(f"{dt.datetime.now(TZ):%F %T} postado {item['key']} {item['title']}")
         seen[item["key"]] = dt.datetime.now(TZ).isoformat(timespec="seconds")
         save(seen)  # a cada post: se o proximo falhar, este nao repete na proxima rodada

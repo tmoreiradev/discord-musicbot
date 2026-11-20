@@ -18,7 +18,7 @@ import html
 import re
 import sys
 
-from botlib import http, load_env, load_state, log, save_state, send
+from botlib import http, load_env, load_state, log, save_state, send, single_instance
 
 IGN = "https://www.ign.com/wikis/aniimo/All_Aniimo_Codes_For_Free_Rewards"
 GAMEWITH = "https://gamewith.ai/aniimo/en/articles/how-to-redeem-codes"
@@ -53,6 +53,7 @@ def gamewith():
 def main():
     dry = "--dry-run" in sys.argv
     env = load_env()
+    lock = single_instance("aniimo-codes")  # noqa: F841
     found, ok = {}, 0
     for name, fn in (("IGN", ign), ("GameWith", gamewith)):
         try:

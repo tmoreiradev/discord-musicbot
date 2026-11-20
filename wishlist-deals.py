@@ -17,7 +17,8 @@ Uso: wishlist-deals.py [--dry-run]
 import sys
 import time
 
-from botlib import http, load_config, load_env, load_state, log, now, save_state, send, STEAM_API, steam_names, steam_profiles
+from botlib import (STEAM_API, http, load_config, load_env, load_state, log, save_state, send, single_instance,
+                    steam_names, steam_profiles)
 
 def prices(appids):
     out = {}
@@ -47,8 +48,9 @@ def main():
     dry = "--dry-run" in sys.argv
     env, cfg = load_env(), load_config()
     wc, fc = cfg["wishlist"], cfg["steam_news"]["friends"]
-    key = env["STEAM_API_KEY"]
+    key = env.get("STEAM_API_KEY")  # so para lista de amigos e nomes; wishlist e preco nao pedem chave
     channel = wc.get("channel") or env["GAMES_CHANNEL_ID"]
+    lock = single_instance("wishlist-deals")  # noqa: F841
     st = load_state("wishlist-deals")
     first_run = st is None
     st = st or {"sales": {}, "lows": {}}
@@ -66,7 +68,7 @@ def main():
         time.sleep(0.3)
     watch = [a for a, w in wishers.items() if fc["owner"] in w or len(w) >= wc.get("min_wishlists", 2)]
     pr = prices(watch)
-    names = steam_names(key, ids)
+    names = None  # so busca quando ha o que postar (a maioria das rodadas nao posta nada)
     posted = 0
     for appid, p in pr.items():
         final = p["final"]
@@ -81,13 +83,19 @@ def main():
         st["sales"][appid] = final
         if first_run:
             continue
+        if names is None:
+            names = steam_names(key, ids)
         who = ", ".join(sorted(names.get(s, s) for s in wishers[appid]))
         low_txt = ""
         if low and low < final:
             low_txt = f"\nMenor preço que o bot já viu: {brl(low)}"
         elif low and final < low:
             low_txt = "\n**Menor preço que o bot já viu**"
-        name, header = app_info(appid)
+        try:
+            name, header = app_info(appid)
+        except Exception as err:  # capa e nome sao enfeite (inclusive resposta que nao e JSON): posta com o id
+            log(f"appdetails de {appid} falhou ({err})")
+            name, header = appid, None
         e = {"author": {"name": "Promoção na Steam · wishlist"}, "title": name,
              "url": f"https://store.steampowered.com/app/{appid}/",
              "description": f"~~{p['initial_formatted']}~~ **{p['final_formatted']}** (-{p['discount_percent']}%)"
@@ -99,7 +107,15 @@ def main():
         if dry:
             print(e["title"], "|", e["description"].replace("\n", " | "))
             continue
-        send(env, channel, [e])
+        try:
+            send(env, channel, [e])
+        except RuntimeError as err:  # um post que falha nao derruba a rodada (o state dos ja postados se perdia)
+            log(f"post de {appid} falhou ({err}); tenta de novo na proxima rodada")
+            if prev is None:
+                del st["sales"][appid]
+            else:
+                st["sales"][appid] = prev
+            continue
         posted += 1
         log(f"postado {appid} {e['title']} -{p['discount_percent']}%")
         time.sleep(1.5)

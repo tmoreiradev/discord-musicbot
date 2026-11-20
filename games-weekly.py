@@ -19,6 +19,8 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from botlib import load_state, save_state
 from zoneinfo import ZoneInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -173,12 +175,20 @@ def main():
     if "--dry-run" in args:
         print(json.dumps(embeds, ensure_ascii=False, indent=2))
         return
+    # checkpoint por lote: rodar de novo depois de uma falha no meio nao repete o que ja saiu (--force repete tudo)
+    key = f"{start}|{env['GAMES_CHANNEL_ID']}"
+    st = load_state("games-weekly") or {}
+    sent = 0 if "--force" in args or st.get("key") != key else st.get("sent", 0)
     # Discord aceita no maximo 10 embeds por mensagem.
-    for i in range(0, len(embeds), 10):
+    for n, i in enumerate(range(0, len(embeds), 10)):
+        if n < sent:
+            print(f"{dt.datetime.now(TZ):%F %T} lote {n + 1} ja postado nesta semana, pulado")
+            continue
         payload = {"embeds": embeds[i:i + 10], "allowed_mentions": {"parse": []}}
         msg = http(f"https://discord.com/api/v10/channels/{env['GAMES_CHANNEL_ID']}/messages",
                    data=json.dumps(payload).encode(), method="POST",
                    headers={"Authorization": f"Bot {env['DISCORD_BOT_TOKEN']}", "Content-Type": "application/json"})
+        save_state("games-weekly", {"key": key, "sent": n + 1})
         print(f"{dt.datetime.now(TZ):%F %T} postado msg={msg['id']} jogos={len(entries)}")
 
 

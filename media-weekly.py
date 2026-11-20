@@ -544,6 +544,8 @@ def main():
     # episodios tem cron proprio na quarta: na segunda o episodio de domingo ainda nao juntou votos
     cats = [a for a in args if a in CATEGORIAS] or [c for c in CATEGORIAS if not c.startswith("episodios")]
     falhou = False
+    # checkpoint por categoria/semana/canal: repetir o comando depois de uma falha so posta o que faltou (--force repete)
+    done = load_state("media-weekly") or {}
     for cat in cats:
         if (cat in ("filmes", "series") or cat.startswith("episodios")) and not env.get("TMDB_TOKEN"):
             log(f"{cat}: sem TMDB_TOKEN no .env, pulado")
@@ -560,7 +562,13 @@ def main():
                 if jpeg:
                     open(f"/tmp/media-weekly-{cat}.jpg", "wb").write(jpeg)
                 continue
+            key = f"{cat}|{ini}|{env['GAMES_CHANNEL_ID']}"
+            if key in done and "--force" not in args:
+                log(f"{cat}: ja postado nesta semana (msg={done[key]}), pulado")
+                continue
             msg = post_with_image(env, embed, jpeg) if jpeg else send(env, env["GAMES_CHANNEL_ID"], [embed])
+            done = {**dict(list(done.items())[-40:]), key: msg["id"]}  # guarda as ultimas ~40 entregas
+            save_state("media-weekly", done)
             log(f"{cat}: postado msg={msg['id']} itens={len(entries)}")
         except Exception as e:  # uma fonte fora do ar nao derruba as outras categorias
             log(f"{cat}: ERRO {e}")

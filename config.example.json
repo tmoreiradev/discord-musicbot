@@ -39,9 +39,6 @@
     "channel": "<channel for idle-shutdown notices>",
     "idle_minutes": 60
   },
-  "weekly": {
-    "channel": "<channel for the weekly summary>"
-  },
   "tempvoice": {
     "category": "<voice category id>"
   }

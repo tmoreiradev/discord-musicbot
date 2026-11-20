@@ -12,7 +12,7 @@ import datetime as dt
 import sys
 import urllib.parse
 
-from botlib import discord, http, load_config, load_env, load_state, log, now, save_state, send
+from botlib import discord, http, load_config, load_env, load_state, log, now, save_state, send, single_instance
 
 LIVE, ENDED = 0x9146FF, 0x4F545C
 
@@ -63,28 +63,37 @@ def main():
     channel = env.get("TWITCH_CHANNEL_ID") or cfg["channel"]
     # TWITCH_LOGINS=a,b sobrepoe a lista (teste com um canal que esta ao vivo agora)
     logins = [l.lower() for l in (env["TWITCH_LOGINS"].split(",") if env.get("TWITCH_LOGINS") else cfg["logins"])]
+    lock = single_instance("twitch-live")  # noqa: F841 (cron de 2 min: rodada lenta sobrepunha e repostava a live)
     st = load_state("twitch-live") or {}
     token = app_token(env, st)
     streams = {s["user_login"].lower(): s for s in helix(env, token, "streams", {"user_login": logins})}
-    users = {u["login"].lower(): u for u in helix(env, token, "users", {"login": logins})} if streams else {}
     lives = st.setdefault("lives", {})
+    # avatar so entra no embed: busca so quando ha live nova ou titulo/jogo mudou (antes: a cada 2 min de live)
+    changed = [l for l, s in streams.items() if not (c := lives.get(l)) or c["stream_id"] != s["id"]
+               or (c["title"], c["game"]) != (s["title"], s.get("game_name"))]
+    users = {u["login"].lower(): u for u in helix(env, token, "users", {"login": changed})} if changed else {}
 
     for login, s in streams.items():
-        e = live_embed(s, users.get(login, {}))
-        e = {k: v for k, v in e.items() if v is not None}
         cur = lives.get(login)
         if dry:
             print(login, "AO VIVO", s["title"], "|", s.get("game_name"))
             continue
-        if not cur or cur["stream_id"] != s["id"]:
-            msg = send(env, channel, [e], content=f"🔴 **{s['user_name']}** está ao vivo na Twitch!")
-            lives[login] = {"stream_id": s["id"], "message_id": msg["id"], "started_at": s["started_at"],
-                            "title": s["title"], "game": s.get("game_name")}
-            log(f"live {login} {s['id']} postada")
-        elif (cur["title"], cur["game"]) != (s["title"], s.get("game_name")):
-            discord(env, "PATCH", f"/channels/{channel}/messages/{cur['message_id']}", {"embeds": [e]})
-            cur.update(title=s["title"], game=s.get("game_name"))
-            log(f"live {login} atualizada")
+        if login not in changed:
+            continue
+        e = live_embed(s, users.get(login, {}))
+        e = {k: v for k, v in e.items() if v is not None}
+        try:
+            if not cur or cur["stream_id"] != s["id"]:
+                msg = send(env, channel, [e], content=f"🔴 **{s['user_name']}** está ao vivo na Twitch!")
+                lives[login] = {"stream_id": s["id"], "message_id": msg["id"], "started_at": s["started_at"],
+                                "title": s["title"], "game": s.get("game_name")}
+                log(f"live {login} {s['id']} postada")
+            else:
+                discord(env, "PATCH", f"/channels/{channel}/messages/{cur['message_id']}", {"embeds": [e]})
+                cur.update(title=s["title"], game=s.get("game_name"))
+                log(f"live {login} atualizada")
+        except RuntimeError as err:  # um canal que falha nao impede gravar os outros (senao repostavam)
+            log(f"live {login}: post/edicao falhou ({err}); tenta de novo em 2 min")
 
     for login in [l for l in lives if l not in streams]:
         cur = lives.pop(login)
@@ -106,8 +115,12 @@ def main():
                 e.get("author", {}).pop("icon_url", None)
             discord(env, "PATCH", f"/channels/{channel}/messages/{cur['message_id']}",
                     {"content": f"⚫ **{name}** encerrou a live ({fmt_duration(start)}).", "embeds": [e]})
-        except RuntimeError as err:  # mensagem apagada a mao etc.: so esquece a live
-            log(f"nao consegui editar o fim da live de {login}: {err}")
+        except (RuntimeError, LookupError) as err:  # mensagem apagada a mao, embed sumido etc.: so esquece a live
+            log(f"nao consegui editar o fim da live de {login}: {err!r}")
+            # falha passageira (rede, 429, 5xx): guarda a live e tenta fechar de novo, ate 5 rodadas
+            if str(err).startswith(("rede em", "HTTP 429", "HTTP 5")) and cur.get("end_tries", 0) < 5:
+                lives[login] = {**cur, "end_tries": cur.get("end_tries", 0) + 1}
+                continue
         log(f"live {login} encerrada")
 
     if not dry:

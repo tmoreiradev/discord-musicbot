@@ -22,7 +22,7 @@ import re
 import sys
 import time
 
-from botlib import http, load_config, load_env, load_state, log, now, save_state, send
+from botlib import http, load_config, load_env, load_state, log, now, save_state, send, single_instance
 
 UPDATE_RE = re.compile(r"\b(update|patch|hotfix|changelog|release notes|notas|atualiza\w*|version|v\d+\.\d+"
                        r"|season|temporada|expansion|dlc|1\.0|early access)\b", re.I)
@@ -122,11 +122,18 @@ def refresh_friends(cfg, st, key):
                 log(f"perfil {p}: falhou ({e})")
             time.sleep(0.5)
 
-    for who, games in (recent_games_api(key, profiles) if key else xml_each()):
+    rows = None
+    if key:
+        try:
+            rows = list(recent_games_api(key, profiles))
+        except Exception as e:  # chave revogada devolve 403 em tudo: o XML publico cobre sem chave
+            log(f"API da Steam recusou ({e}); usando o XML público")
+    via = "API" if rows is not None else "XML"
+    for who, games in (rows if rows is not None else xml_each()):
         for appid, g in games.items():
             players.setdefault(appid, set()).add(who)
             names[appid] = g
-    log(f"amigos: {len(profiles)} perfis lidos ({'API' if key else 'XML'}), {len(players)} jogos recentes")
+    log(f"amigos: {len(profiles)} perfis lidos ({via}), {len(players)} jogos recentes")
     auto = st.setdefault("auto_apps", {})
     for appid, who in players.items():
         # "ignore": apps que nao sao jogo (Wallpaper Engine etc.) ou que ninguem quer no canal
@@ -148,8 +155,12 @@ def main():
     dry = "--dry-run" in sys.argv
     env, cfg = load_env(), load_config()["steam_news"]
     channel = env.get("NEWS_CHANNEL_ID") or cfg.get("channel") or env["GAMES_CHANNEL_ID"]
+    lock = single_instance("steam-news")  # noqa: F841 (segura o lock ate o fim)
     st = load_state("steam-news") or {"apps": [], "seen": {}}
-    refresh_friends(cfg, st, env.get("STEAM_API_KEY"))
+    try:
+        refresh_friends(cfg, st, env.get("STEAM_API_KEY"))
+    except Exception as e:  # a lista de amigos e extra: sem ela as notas dos jogos ja monitorados saem igual
+        log(f"refresh_friends falhou ({e}); seguindo com a lista atual")
     apps = {**{a: v["name"] for a, v in st.get("auto_apps", {}).items()}, **cfg["apps"]}
     for appid, game in apps.items():
         mode = "patch"
@@ -175,7 +186,11 @@ def main():
                 if dry:
                     print(game, "|", it["title"])
                     continue
-                send(env, channel, [e])
+                try:
+                    send(env, channel, [e])
+                except RuntimeError as err:  # sem marcar como visto: sai na proxima rodada, e as ja postadas ficam gravadas
+                    log(f"{game}: post falhou ({err})")
+                    continue
                 log(f"postado {game}: {it['title']}")
             elif dry:
                 print(game, "| (ignorado)", it["title"], "| seed" if seeding else "")
